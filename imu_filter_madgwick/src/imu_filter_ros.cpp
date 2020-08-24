@@ -51,6 +51,12 @@ ImuFilterRos::ImuFilterRos(ros::NodeHandle nh, ros::NodeHandle nh_private):
   if (!nh_private_.getParam ("publish_debug_topics", publish_debug_topics_))
     publish_debug_topics_= false;
 
+  // Get the topics from the launch file
+  if (!nh_private_.getParam ("imu_topic", imu_raw_topic))
+    imu_raw_topic = "/data_raw"; // Default topic
+  if (!nh_private_.getParam ("mag_topic", mag_topic))
+    mag_topic = "/mag"; // Default topic
+
   // For ROS Jade, make this default to true.
   if (!nh_private_.getParam ("use_magnetic_field_msg", use_magnetic_field_msg_))
   {
@@ -119,28 +125,42 @@ ImuFilterRos::ImuFilterRos(ros::NodeHandle nh, ros::NodeHandle nh_private):
   // Synchronize inputs. Topic subscriptions happen on demand in the connection callback.
   int queue_size = 5;
 
+  // Create the subscriber for the correct topics
+  if (std::strcmp(imu_raw_topic.c_str() ,"/data_raw") != 0)
+    input_imu_topic = imu_raw_topic;
+  else
+    input_imu_topic = ros::names::resolve("imu") + "/data_raw";
+
+  if (std::strcmp(mag_topic.c_str() ,"/mag") != 0)
+    input_mag_topic = mag_topic;
+  else
+    if(use_magnetic_field_msg_)
+        input_mag_topic = ros::names::resolve("imu") + "/mag";
+    else
+        input_mag_topic = ros::names::resolve("imu") + "/magnetic_field";
+
   imu_subscriber_.reset(new ImuSubscriber(
-    nh_, ros::names::resolve("imu") + "/data_raw", queue_size));
+    nh_, input_imu_topic, queue_size));
 
   if (use_mag_)
   {
     if (use_magnetic_field_msg_)
     {
       mag_subscriber_.reset(new MagSubscriber(
-        nh_, ros::names::resolve("imu") + "/mag", queue_size));
+        nh_, input_mag_topic, queue_size));
     }
     else
     {
       mag_subscriber_.reset(new MagSubscriber(
-        nh_, ros::names::resolve("imu") + "/magnetic_field", queue_size));
+        nh_, input_mag_topic, queue_size));
 
       // Initialize the shim to support republishing Vector3Stamped messages from /mag as MagneticField
       // messages on the /magnetic_field topic.
       mag_republisher_ = nh_.advertise<MagMsg>(
         ros::names::resolve("imu") + "/magnetic_field", 5);
-      vector_mag_subscriber_.reset(new MagVectorSubscriber(
-        nh_, ros::names::resolve("imu") + "/mag", queue_size));
-      vector_mag_subscriber_->registerCallback(&ImuFilterRos::imuMagVectorCallback, this);
+     // vector_mag_subscriber_.reset(new MagVectorSubscriber(
+     //   nh_, input_mag_topic, queue_size));
+     // vector_mag_subscriber_->registerCallback(&ImuFilterRos::imuMagVectorCallback, this);
     }
 
     sync_.reset(new Synchronizer(
@@ -153,6 +173,12 @@ ImuFilterRos::ImuFilterRos(ros::NodeHandle nh, ros::NodeHandle nh_private):
   }
 
   check_topics_timer_ = nh_.createTimer(ros::Duration(10.0), &ImuFilterRos::checkTopicsTimerCallback, this);
+
+  // PRINT OUT TOPICS FOR DEBUGGING
+  ROS_INFO_STREAM("IMU topic: " << input_imu_topic);
+  ROS_INFO_STREAM("MAG topic: " << input_mag_topic);
+
+
 }
 
 ImuFilterRos::~ImuFilterRos()
@@ -391,8 +417,8 @@ void ImuFilterRos::imuMagVectorCallback(const MagVectorMsg::ConstPtr& mag_vector
 void ImuFilterRos::checkTopicsTimerCallback(const ros::TimerEvent&)
 {
   if (use_mag_)
-    ROS_WARN_STREAM("Still waiting for data on topics " << ros::names::resolve("imu") << "/data_raw"
-                    << " and " << ros::names::resolve("imu") << "/mag" << "...");
+    ROS_WARN_STREAM("Still waiting for data on topics " << input_imu_topic
+                    << " and " << input_mag_topic << "...");
   else
     ROS_WARN_STREAM("Still waiting for data on topic " << ros::names::resolve("imu") << "/data_raw" << "...");
 }
